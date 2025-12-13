@@ -1,0 +1,447 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>WHOIS (RDAP) + DNS Intelligence Collector</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 0; padding: 0; }
+    header { padding: 18px 20px; border-bottom: 1px solid rgba(127,127,127,.35); }
+    main { padding: 20px; max-width: 1100px; margin: 0 auto; }
+    h1 { margin: 0 0 6px; font-size: 20px; }
+    p.muted { margin: 0; opacity: .75; font-size: 13px; }
+    .card { border: 1px solid rgba(127,127,127,.35); border-radius: 12px; padding: 14px; margin: 14px 0; }
+    .row { display: grid; grid-template-columns: 1.2fr .8fr; gap: 12px; }
+    @media (max-width: 900px) { .row { grid-template-columns: 1fr; } }
+    label { display: block; font-size: 12px; opacity: .8; margin-bottom: 6px; }
+    input[type="text"] { width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid rgba(127,127,127,.35); background: transparent; }
+    button { padding: 10px 12px; border-radius: 10px; border: 1px solid rgba(127,127,127,.35); background: transparent; cursor: pointer; }
+    button.primary { border-color: rgba(80,140,255,.9); }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    .btns { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
+    .grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+    @media (max-width: 900px) { .grid3 { grid-template-columns: 1fr; } }
+    textarea { width: 100%; min-height: 220px; padding: 10px 12px; border-radius: 10px; border: 1px solid rgba(127,127,127,.35); background: transparent; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+    .status { font-size: 13px; opacity: .85; }
+    .pill { display: inline-block; padding: 2px 8px; border: 1px solid rgba(127,127,127,.35); border-radius: 999px; font-size: 12px; margin-right: 8px; }
+    .kvs { display: grid; grid-template-columns: 180px 1fr; gap: 8px 12px; font-size: 13px; }
+    @media (max-width: 700px) { .kvs { grid-template-columns: 1fr; } }
+    .k { opacity: .7; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    details summary { cursor: pointer; opacity: .9; }
+    footer { padding: 12px 20px; border-top: 1px solid rgba(127,127,127,.35); opacity: .75; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>WHOIS (RDAP) + DNS Intelligence Collector</h1>
+    <p class="muted">
+      Browser-only collector using DNS-over-HTTPS (Google) and RDAP (rdap.org). No server required.
+    </p>
+  </header>
+
+  <main>
+    <div class="card">
+      <div class="row">
+        <div>
+          <label for="domain">Domain or hostname</label>
+          <input id="domain" type="text" placeholder="example.com" spellcheck="false" />
+          <div class="btns">
+            <button id="run" class="primary">Run Collection</button>
+            <button id="clear">Clear</button>
+            <button id="copy">Copy JSON</button>
+            <button id="download">Download JSON</button>
+          </div>
+          <p class="status" id="status">Idle.</p>
+        </div>
+
+        <div>
+          <label>Quick summary</label>
+          <div class="card" style="margin:0;">
+            <div id="summary" class="kvs">
+              <div class="k">Normalized</div><div class="mono" id="s_norm">—</div>
+              <div class="k">Registrable</div><div class="mono" id="s_reg">—</div>
+              <div class="k">RDAP server</div><div class="mono" id="s_rdap">—</div>
+              <div class="k">Nameservers</div><div class="mono" id="s_ns">—</div>
+              <div class="k">A / AAAA</div><div class="mono" id="s_ip">—</div>
+              <div class="k">MX</div><div class="mono" id="s_mx">—</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid3">
+      <div class="card">
+        <h3 style="margin:0 0 10px; font-size:14px;">DNS Intelligence (DoH)</h3>
+        <details open>
+          <summary>Records & resolvers</summary>
+          <p class="muted">Uses Google DNS-over-HTTPS JSON API.</p>
+        </details>
+        <textarea id="dnsOut" readonly placeholder="DNS results will appear here..."></textarea>
+      </div>
+
+      <div class="card">
+        <h3 style="margin:0 0 10px; font-size:14px;">RDAP Registration Data</h3>
+        <details open>
+          <summary>WHOIS-equivalent</summary>
+          <p class="muted">RDAP is the web-friendly successor to traditional WHOIS.</p>
+        </details>
+        <textarea id="rdapOut" readonly placeholder="RDAP results will appear here..."></textarea>
+      </div>
+
+      <div class="card">
+        <h3 style="margin:0 0 10px; font-size:14px;">Unified Output</h3>
+        <details open>
+          <summary>Collector JSON</summary>
+          <p class="muted">This is the JSON you can copy or download.</p>
+        </details>
+        <textarea id="allOut" readonly placeholder="Unified collector output will appear here..."></textarea>
+      </div>
+    </div>
+  </main>
+
+  <footer>
+    Notes: Some TLDs may return limited RDAP data; DNS answers depend on resolver behavior and caching.
+  </footer>
+
+<script>
+  // ---------- Utilities ----------
+  function nowIso() { return new Date().toISOString(); }
+
+  function setStatus(msg, kind = "info") {
+    const el = document.getElementById("status");
+    el.textContent = msg;
+    el.dataset.kind = kind;
+  }
+
+  function pretty(obj) {
+    return JSON.stringify(obj, null, 2);
+  }
+
+  function normalizeDomain(input) {
+    // Remove scheme, path, port, fragments; keep hostname.
+    let s = (input || "").trim();
+    if (!s) return "";
+    try {
+      if (!/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(s)) {
+        // Add scheme to leverage URL parsing when user enters raw domain.
+        s = "https://" + s;
+      }
+      const u = new URL(s);
+      return (u.hostname || "").toLowerCase().replace(/\.$/, "");
+    } catch {
+      // Fallback: crude cleanup
+      return s.toLowerCase()
+        .replace(/^https?:\/\//, "")
+        .replace(/\/.*$/, "")
+        .replace(/:.*$/, "")
+        .replace(/\.$/, "");
+    }
+  }
+
+  function isIpLiteral(host) {
+    // Basic IPv4/IPv6 literal check (not exhaustive)
+    if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) return true;
+    if (/^[0-9a-fA-F:]+$/.test(host) && host.includes(":")) return true;
+    return false;
+  }
+
+  function registrableGuess(host) {
+    // Simple heuristic: last two labels (does not handle all public suffixes).
+    // For accurate eTLD+1, use a public suffix list on the server side.
+    const parts = host.split(".").filter(Boolean);
+    if (parts.length <= 2) return host;
+    return parts.slice(-2).join(".");
+  }
+
+  async function fetchJson(url, opts = {}) {
+    const res = await fetch(url, {
+      method: "GET",
+      mode: "cors",
+      cache: "no-store",
+      ...opts
+    });
+    const text = await res.text();
+    let data;
+    try { data = JSON.parse(text); }
+    catch { data = { _nonJson: true, text }; }
+    if (!res.ok) {
+      const err = new Error("HTTP " + res.status);
+      err.status = res.status;
+      err.body = data;
+      throw err;
+    }
+    return data;
+  }
+
+  // ---------- DNS via DNS-over-HTTPS (Google JSON API) ----------
+  // Docs: https://dns.google/resolve?name=example.com&type=A
+  async function dohQuery(name, type) {
+    const url = new URL("https://dns.google/resolve");
+    url.searchParams.set("name", name);
+    url.searchParams.set("type", type);
+    // Optional: CD=0, DO=1 for DNSSEC in some contexts; not guaranteed in JSON API.
+    return await fetchJson(url.toString());
+  }
+
+  async function collectDns(host) {
+    // Query common record types. You can add more (CAA, SOA, PTR, etc.).
+    const types = ["A", "AAAA", "NS", "MX", "TXT", "CAA", "SOA"];
+    const results = {};
+    for (const t of types) {
+      try {
+        results[t] = await dohQuery(host, t);
+      } catch (e) {
+        results[t] = { error: true, message: e.message, status: e.status || null, body: e.body || null };
+      }
+    }
+    return results;
+  }
+
+  function extractDnsSummary(dns) {
+    const out = { a: [], aaaa: [], ns: [], mx: [] };
+
+    const aAns = dns?.A?.Answer || [];
+    for (const rr of aAns) if (rr?.data) out.a.push(rr.data);
+
+    const aaaaAns = dns?.AAAA?.Answer || [];
+    for (const rr of aaaaAns) if (rr?.data) out.aaaa.push(rr.data);
+
+    const nsAns = dns?.NS?.Answer || [];
+    for (const rr of nsAns) if (rr?.data) out.ns.push(rr.data.replace(/\.$/, ""));
+
+    const mxAns = dns?.MX?.Answer || [];
+    for (const rr of mxAns) {
+      // MX "data" format is like: "10 mail.example.com."
+      if (rr?.data) out.mx.push(rr.data.replace(/\.$/, ""));
+    }
+    return out;
+  }
+
+  // ---------- RDAP (WHOIS-equivalent) ----------
+  // rdap.org provides a redirector; final server depends on TLD.
+  async function collectRdap(domain) {
+    // rdap.org supports:
+    // - https://rdap.org/domain/{domain}
+    // It returns the RDAP JSON, and typically includes links to the authoritative RDAP server.
+    const url = `https://rdap.org/domain/${encodeURIComponent(domain)}`;
+    const data = await fetchJson(url);
+    return { url, data };
+  }
+
+  function extractRdapSummary(rdapData) {
+    // RDAP responses vary by registry; extract common fields carefully.
+    const s = {
+      handle: null,
+      ld: null,
+      status: [],
+      nameservers: [],
+      registrar: null,
+      events: {}
+    };
+
+    s.handle = rdapData?.handle || null;
+    s.ld = rdapData?.ldhName || rdapData?.unicodeName || null;
+    if (Array.isArray(rdapData?.status)) s.status = rdapData.status;
+
+    if (Array.isArray(rdapData?.nameservers)) {
+      for (const ns of rdapData.nameservers) {
+        const n = ns?.ldhName || ns?.unicodeName;
+        if (n) s.nameservers.push(String(n).replace(/\.$/, ""));
+      }
+    }
+
+    // registrar: look for entity with roles including "registrar"
+    if (Array.isArray(rdapData?.entities)) {
+      const registrarEntity = rdapData.entities.find(e => Array.isArray(e.roles) && e.roles.includes("registrar"));
+      if (registrarEntity) {
+        s.registrar = registrarEntity.vcardArray?.[1]?.find(x => x?.[0] === "fn")?.[3] || registrarEntity.handle || null;
+      }
+    }
+
+    // events: registration/expiration/last changed etc.
+    if (Array.isArray(rdapData?.events)) {
+      for (const ev of rdapData.events) {
+        if (ev?.eventAction && ev?.eventDate) {
+          s.events[ev.eventAction] = ev.eventDate;
+        }
+      }
+    }
+
+    return s;
+  }
+
+  function findRdapServerHint(rdap) {
+    // Try to infer authoritative RDAP server from "links"
+    const links = rdap?.links || [];
+    for (const l of links) {
+      if (l?.rel === "related" || l?.rel === "self") {
+        if (typeof l?.href === "string" && l.href.startsWith("https://")) {
+          try {
+            const u = new URL(l.href);
+            return u.origin;
+          } catch { /* ignore */ }
+        }
+      }
+    }
+    return null;
+  }
+
+  // ---------- UI wiring ----------
+  const domainEl = document.getElementById("domain");
+  const runBtn = document.getElementById("run");
+  const clearBtn = document.getElementById("clear");
+  const copyBtn = document.getElementById("copy");
+  const downloadBtn = document.getElementById("download");
+
+  const dnsOut = document.getElementById("dnsOut");
+  const rdapOut = document.getElementById("rdapOut");
+  const allOut = document.getElementById("allOut");
+
+  function setSummary({ norm, reg, rdapServer, ns, ip, mx }) {
+    document.getElementById("s_norm").textContent = norm || "—";
+    document.getElementById("s_reg").textContent = reg || "—";
+    document.getElementById("s_rdap").textContent = rdapServer || "—";
+    document.getElementById("s_ns").textContent = ns || "—";
+    document.getElementById("s_ip").textContent = ip || "—";
+    document.getElementById("s_mx").textContent = mx || "—";
+  }
+
+  function resetOutputs() {
+    dnsOut.value = "";
+    rdapOut.value = "";
+    allOut.value = "";
+    setSummary({ norm: null, reg: null, rdapServer: null, ns: null, ip: null, mx: null });
+    setStatus("Idle.");
+  }
+
+  async function run() {
+    const raw = domainEl.value;
+    const host = normalizeDomain(raw);
+
+    if (!host) {
+      setStatus("Please enter a domain or hostname.", "warn");
+      return;
+    }
+    if (isIpLiteral(host)) {
+      setStatus("IP literals are not supported in this browser-only RDAP domain flow. Enter a domain name.", "warn");
+      return;
+    }
+
+    runBtn.disabled = true;
+    setStatus("Collecting DNS and RDAP data...", "info");
+    resetOutputs(); // clears outputs/status; we will set status again immediately
+    setStatus("Collecting DNS and RDAP data...", "info");
+
+    const started = nowIso();
+    const registrable = registrableGuess(host);
+
+    const output = {
+      collected_at: started,
+      input: raw,
+      normalized_host: host,
+      registrable_guess: registrable,
+      sources: {
+        dns_over_https: "https://dns.google/resolve",
+        rdap: "https://rdap.org/domain/{domain}"
+      },
+      dns: null,
+      rdap: null,
+      summaries: null,
+      errors: []
+    };
+
+    try {
+      const [dns, rdapWrap] = await Promise.all([
+        collectDns(host),
+        collectRdap(registrable)
+      ]);
+
+      output.dns = dns;
+      output.rdap = rdapWrap;
+
+      dnsOut.value = pretty(dns);
+      rdapOut.value = pretty(rdapWrap);
+
+      const dnsSummary = extractDnsSummary(dns);
+      const rdapSummary = extractRdapSummary(rdapWrap.data);
+      const rdapServer = findRdapServerHint(rdapWrap.data);
+
+      output.summaries = {
+        dns: dnsSummary,
+        rdap: rdapSummary,
+        rdap_server_hint: rdapServer
+      };
+
+      const nsText = (dnsSummary.ns.length ? dnsSummary.ns.join(", ") : (rdapSummary.nameservers?.length ? rdapSummary.nameservers.join(", ") : "—"));
+      const ipText = [
+        dnsSummary.a.length ? `A: ${dnsSummary.a.join(", ")}` : null,
+        dnsSummary.aaaa.length ? `AAAA: ${dnsSummary.aaaa.join(", ")}` : null
+      ].filter(Boolean).join(" | ") || "—";
+      const mxText = dnsSummary.mx.length ? dnsSummary.mx.join(", ") : "—";
+
+      setSummary({
+        norm: host,
+        reg: registrable,
+        rdapServer: rdapServer || "—",
+        ns: nsText,
+        ip: ipText,
+        mx: mxText
+      });
+
+      allOut.value = pretty(output);
+      setStatus("Done. You can copy or download the unified JSON.", "ok");
+    } catch (e) {
+      output.errors.push({ message: e.message, status: e.status || null, body: e.body || null });
+      allOut.value = pretty(output);
+      setStatus("Collection completed with errors. See unified output for details.", "warn");
+    } finally {
+      runBtn.disabled = false;
+    }
+  }
+
+  async function copyJson() {
+    const txt = allOut.value || "";
+    if (!txt) { setStatus("Nothing to copy yet.", "warn"); return; }
+    try {
+      await navigator.clipboard.writeText(txt);
+      setStatus("Unified JSON copied to clipboard.", "ok");
+    } catch {
+      // fallback
+      allOut.focus();
+      allOut.select();
+      document.execCommand("copy");
+      setStatus("Unified JSON copied (fallback).", "ok");
+    }
+  }
+
+  function downloadJson() {
+    const txt = allOut.value || "";
+    if (!txt) { setStatus("Nothing to download yet.", "warn"); return; }
+    const blob = new Blob([txt], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    const host = normalizeDomain(domainEl.value) || "output";
+    a.download = `intel_${host}_${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setStatus("Downloaded unified JSON.", "ok");
+  }
+
+  runBtn.addEventListener("click", run);
+  clearBtn.addEventListener("click", resetOutputs);
+  copyBtn.addEventListener("click", copyJson);
+  downloadBtn.addEventListener("click", downloadJson);
+
+  domainEl.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") run();
+  });
+
+  // Initial state
+  resetOutputs();
+</script>
+</body>
+</html>
