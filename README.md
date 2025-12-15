@@ -1,6 +1,6 @@
 Live URL: https://aminbiography.github.io/CTI-WHOIS-DNS-APP/
 
----
+---  
 
 ## Explanation for a user (analyst/operator)  
 
