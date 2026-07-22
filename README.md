@@ -4,7 +4,7 @@ Live URL: https://aminbiography.github.io/CTI-WHOIS-DNS-APP/
   
 ## Explanation for a user (analyst/operator)  
 
-### What this page is 
+### What this page is   
 
 This is a **browser-only** “domain intelligence collector.” You paste a **domain or hostname** (for example, `example.com` or `sub.example.com`) and click **Run Collection**. The page then pulls two categories of information:
 
